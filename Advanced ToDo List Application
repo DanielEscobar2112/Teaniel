@@ -1,0 +1,96 @@
+// server.js
+
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// Configuration
+const config = {
+  port: process.env.PORT || 3000,
+  mongoURI: process.env.MONGODB_URI || 'mongodb://localhost:27017/todo',
+  jwtSecret: process.env.JWT_SECRET || 'your_jwt_secret'
+};
+
+// MongoDB models
+const User = mongoose.model('User', new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  email: { type: String, unique: true, required: true },
+  password: { type: String, required: true }
+}));
+
+const Task = mongoose.model('Task', new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String }
+}));
+
+// Middleware
+const authMiddleware = (req, res, next) => {
+  const token = req.headers.authorization && req.headers.authorization.split(' ')[1];
+  if (!token) return res.status(401).json({ message: 'Unauthorized' });
+
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+};
+
+// Controllers
+const register = async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ username, email, password: hashedPassword });
+    await user.save();
+    res.status(201).json({ message: 'User registered successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    const token = jwt.sign({ userId: user._id, email: user.email }, config.jwtSecret);
+    res.json({ token });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const createTask = async (req, res) => {
+  try {
+    const { title, description } = req.body;
+    const task = new Task({ title, description });
+    await task.save();
+    res.status(201).json(task);
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Express app setup
+const app = express();
+app.use(express.json());
+
+// Routes
+app.post('/api/register', register);
+app.post('/api/login', login);
+app.post('/api/tasks', authMiddleware, createTask);
+
+// Connect to MongoDB
+mongoose.connect(config.mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// Start the server
+app.listen(config.port, () => {
+  console.log(`Server listening on port ${config.port}`);
+});
